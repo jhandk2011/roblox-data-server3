@@ -23,8 +23,9 @@ public class Server {
         public void handle(HttpExchange exchange) throws IOException {
             String path = exchange.getRequestURI().getPath();
             String userId = path.replace("/", "").trim();
-            if (userId.isEmpty()) {
-                sendResponse(exchange, 400, "{\"error\": \"Missing UserId\"}");
+
+            if (userId.isEmpty() || !userId.matches("\\d+")) {
+                sendResponse(exchange, 400, "{\"error\": \"Invalid UserId\"}");
                 return;
             }
 
@@ -35,42 +36,52 @@ public class Server {
                 String json = String.format("{\"totalVisits\": %d, \"followers\": %d}", visits, followers);
                 sendResponse(exchange, 200, json);
             } catch (Exception e) {
-                e.printStackTrace();
+                e.printStackTrace(); // Print fejlen til Render logs
                 sendResponse(exchange, 500, "{\"error\": \"Failed to fetch data\"}");
             }
         }
 
         private static int getFollowers(String userId) throws IOException {
-            URL url = new URL("https://friends.roblox.com/v1/users/" + userId + "/followers/count");
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.connect();
+            try {
+                URL url = new URL("https://friends.roblox.com/v1/users/" + userId + "/followers/count");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0"); // vigtigt
+                int status = conn.getResponseCode();
+                if (status != 200) return 0;
 
-            String json = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
-            conn.disconnect();
+                String json = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
+                conn.disconnect();
 
-            String countStr = json.replaceAll("\\D+", "");
-            return countStr.isEmpty() ? 0 : Integer.parseInt(countStr);
+                String numberStr = json.replaceAll("\\D+", "");
+                return numberStr.isEmpty() ? 0 : Integer.parseInt(numberStr);
+            } catch (Exception e) {
+                return 0;
+            }
         }
 
         private static int getVisits(String userId) throws IOException {
-            URL url = new URL("https://games.roblox.com/v2/users/" + userId + "/games");
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.connect();
+            try {
+                URL url = new URL("https://games.roblox.com/v2/users/" + userId + "/games");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                int status = conn.getResponseCode();
+                if (status != 200) return 0;
 
-            String json = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
-            conn.disconnect();
+                String json = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
+                conn.disconnect();
 
-            int totalVisits = 0;
-            String[] parts = json.split("\"visits\":");
-            for (int i = 1; i < parts.length; i++) {
-                String number = parts[i].split("[,}]")[0];
-                try {
-                    totalVisits += Integer.parseInt(number.trim());
-                } catch (Exception ignored) {}
+                int totalVisits = 0;
+                String[] parts = json.split("\"visits\":");
+                for (int i = 1; i < parts.length; i++) {
+                    String number = parts[i].split("[,}]")[0];
+                    try { totalVisits += Integer.parseInt(number.trim()); } catch (Exception ignored) {}
+                }
+                return totalVisits;
+            } catch (Exception e) {
+                return 0;
             }
-            return totalVisits;
         }
 
         private static void sendResponse(HttpExchange exchange, int code, String response) throws IOException {
