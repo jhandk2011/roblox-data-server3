@@ -35,8 +35,13 @@ public class Server {
             try {
                 int followers = getFollowers(userId);
                 int totalVisits = getTotalVisits(userId);
+                String joinDate = getJoinDate(userId);
 
-                String json = String.format("{\"totalVisits\": %d, \"followers\": %d}", totalVisits, followers);
+                String json = String.format(
+                    "{\"followers\": %d, \"totalVisits\": %d, \"joinDate\": \"%s\"}",
+                    followers, totalVisits, joinDate
+                );
+
                 sendResponse(exchange, 200, json);
             } catch (Exception e) {
                 e.printStackTrace();
@@ -44,7 +49,7 @@ public class Server {
             }
         }
 
-        // Fetch followers from Roblox API
+        // Get followers count
         private static int getFollowers(String userId) {
             try {
                 URL url = new URL("https://friends.roblox.com/v1/users/" + userId + "/followers/count");
@@ -71,11 +76,10 @@ public class Server {
             }
         }
 
-        // Fetch total visits from all public games
+        // Get total visits across all your public games
         private static int getTotalVisits(String userId) {
             int totalVisits = 0;
             try {
-                // Step 1: Get all public games of the user
                 String apiUrl = "https://games.roblox.com/v2/users/" + userId + "/games?accessFilter=Public&limit=100";
                 URL url = new URL(apiUrl);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -87,7 +91,7 @@ public class Server {
                 String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
                 conn.disconnect();
 
-                // Step 2: Extract universeIds from the JSON
+                // Extract universeIds
                 List<String> universeIds = new ArrayList<>();
                 String search = "\"universeId\":";
                 int index = 0;
@@ -100,9 +104,7 @@ public class Server {
                     index = end;
                 }
 
-                if (universeIds.isEmpty()) return 0;
-
-                // Step 3: For each universeId, fetch actual visits
+                // Fetch visits for each universeId
                 for (String universeId : universeIds) {
                     String visitsUrl = "https://games.roblox.com/v1/games?universeIds=" + universeId;
                     URL url2 = new URL(visitsUrl);
@@ -115,7 +117,6 @@ public class Server {
                     String visitsResponse = new Scanner(conn2.getInputStream()).useDelimiter("\\A").next();
                     conn2.disconnect();
 
-                    // parse "visits" from JSON
                     String visitSearch = "\"visits\":";
                     int visitIndex = visitsResponse.indexOf(visitSearch);
                     if (visitIndex != -1) {
@@ -136,6 +137,32 @@ public class Server {
             }
 
             return totalVisits;
+        }
+
+        // Get join date
+        private static String getJoinDate(String userId) {
+            try {
+                URL url = new URL("https://users.roblox.com/v1/users/" + userId);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+
+                if (conn.getResponseCode() != 200) return "Unknown";
+
+                String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
+                conn.disconnect();
+
+                String search = "\"created\":\"";
+                int index = response.indexOf(search);
+                if (index == -1) return "Unknown";
+                int start = index + search.length();
+                int end = response.indexOf("\"", start);
+                return response.substring(start, end);
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                return "Unknown";
+            }
         }
 
         private static void sendResponse(HttpExchange exchange, int code, String response) throws IOException {
