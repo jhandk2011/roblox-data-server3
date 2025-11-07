@@ -1,63 +1,29 @@
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-import java.io.IOException;
+
 import java.io.OutputStream;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Scanner;
-import java.util.concurrent.ConcurrentHashMap;
 
-import org.json.JSONObject; // Add org.json library
+import org.json.JSONObject;
 
 public class Server {
-
-    private static ConcurrentHashMap<Integer, Integer> visitsMap = new ConcurrentHashMap<>();
 
     public static void main(String[] args) throws IOException {
         int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
 
-        server.createContext("/visits", new VisitsHandler());
         server.createContext("/user", new UserHandler());
-
         server.setExecutor(null);
         server.start();
-        System.out.println("Server running on port " + port);
+
+        System.out.println("Server started on port " + port);
     }
 
-    // ---------------- Increment visits ----------------
-    static class VisitsHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
-                sendResponse(exchange, 405, "{\"error\":\"POST only\"}");
-                return;
-            }
-
-            Scanner scanner = new Scanner(exchange.getRequestBody()).useDelimiter("\\A");
-            String body = scanner.hasNext() ? scanner.next() : "";
-            scanner.close();
-
-            try {
-                JSONObject json = new JSONObject(body);
-                int userId = json.getInt("userId");
-                visitsMap.putIfAbsent(userId, 0);
-                visitsMap.put(userId, visitsMap.get(userId) + 1);
-
-                JSONObject response = new JSONObject();
-                response.put("success", true);
-                response.put("totalVisits", visitsMap.get(userId));
-                sendResponse(exchange, 200, response.toString());
-            } catch (Exception e) {
-                e.printStackTrace();
-                sendResponse(exchange, 400, "{\"error\":\"Invalid request\"}");
-            }
-        }
-    }
-
-    // ---------------- User stats ----------------
     static class UserHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -75,19 +41,15 @@ public class Server {
             }
 
             int userId = Integer.parseInt(userIdStr);
-            int visits = visitsMap.getOrDefault(userId, 0);
 
+            int totalVisits = getTotalVisits(userId);
             int followers = getFollowers(userId);
             String joinDate = getJoinDate(userId);
-            int favorites = getFavorites(userId); // optional
-            int activePlayers = getActivePlayers(userId); // optional
 
             JSONObject response = new JSONObject();
-            response.put("totalVisits", visits);
+            response.put("totalVisits", totalVisits);
             response.put("followers", followers);
             response.put("joinDate", joinDate);
-            response.put("favorites", favorites);
-            response.put("activePlayers", activePlayers);
 
             sendResponse(exchange, 200, response.toString());
         }
@@ -100,11 +62,17 @@ public class Server {
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+
             if (conn.getResponseCode() != 200) return 0;
 
             String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
             conn.disconnect();
-            int start = response.indexOf("\"count\":") + 8;
+
+            String search = "\"count\":";
+            int index = response.indexOf(search);
+            if (index == -1) return 0;
+
+            int start = index + search.length();
             int end = response.indexOf("}", start);
             return Integer.parseInt(response.substring(start, end).trim());
         } catch (Exception e) {
@@ -118,26 +86,65 @@ public class Server {
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+
             if (conn.getResponseCode() != 200) return "Unknown";
 
             String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
             conn.disconnect();
 
-            int start = response.indexOf("\"created\":\"") + 10;
+            String search = "\"created\":\"";
+            int index = response.indexOf(search);
+            if (index == -1) return "Unknown";
+
+            int start = index + search.length();
             int end = response.indexOf("\"", start);
-            return response.substring(start, end);
+            if (end == -1) end = response.length();
+            return response.substring(start, end).trim();
+
         } catch (Exception e) {
             return "Unknown";
         }
     }
 
-    // Placeholder: always 0 (can implement later via Roblox APIs if needed)
-    private static int getFavorites(int userId) { return 0; }
-    private static int getActivePlayers(int userId) { return 0; }
+    private static int getTotalVisits(int userId) {
+        int totalVisits = 0;
+        try {
+            String apiUrl = "https://games.roblox.com/v2/users/" + userId + "/games?sortOrder=Asc&limit=100";
+            URL url = new URL(apiUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+
+            if (conn.getResponseCode() != 200) return 0;
+
+            String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
+            conn.disconnect();
+
+            String search = "\"placeVisits\":";
+            int index = 0;
+            while ((index = response.indexOf(search, index)) != -1) {
+                int start = index + search.length();
+                int end = response.indexOf(",", start);
+                if (end == -1) end = response.indexOf("}", start);
+                if (end == -1) break;
+                String numberStr = response.substring(start, end).trim();
+                try {
+                    totalVisits += Integer.parseInt(numberStr);
+                } catch (Exception ignored) {}
+                index = end;
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return totalVisits;
+    }
 
     private static void sendResponse(HttpExchange exchange, int code, String response) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(code, response.getBytes().length);
-        try (OutputStream os = exchange.getResponseBody()) { os.write(response.getBytes()); }
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(response.getBytes());
+        }
     }
 }
