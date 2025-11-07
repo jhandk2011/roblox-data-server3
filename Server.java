@@ -7,8 +7,11 @@ import java.net.InetSocketAddress;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Scanner;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 public class Server {
+
     public static void main(String[] args) throws IOException {
         int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
@@ -31,57 +34,66 @@ public class Server {
 
             try {
                 int followers = getFollowers(userId);
-                int visits = getVisits(userId);
+                int totalVisits = getTotalVisits(userId);
 
-                String json = String.format("{\"totalVisits\": %d, \"followers\": %d}", visits, followers);
+                String json = String.format("{\"totalVisits\": %d, \"followers\": %d}", totalVisits, followers);
                 sendResponse(exchange, 200, json);
             } catch (Exception e) {
-                e.printStackTrace(); // Print fejlen til Render logs
+                e.printStackTrace();
                 sendResponse(exchange, 500, "{\"error\": \"Failed to fetch data\"}");
             }
         }
 
-        private static int getFollowers(String userId) throws IOException {
+        // Hent antal followers
+        private static int getFollowers(String userId) {
             try {
                 URL url = new URL("https://friends.roblox.com/v1/users/" + userId + "/followers/count");
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0"); // vigtigt
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+
                 int status = conn.getResponseCode();
                 if (status != 200) return 0;
 
-                String json = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
+                String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
                 conn.disconnect();
 
-                String numberStr = json.replaceAll("\\D+", "");
-                return numberStr.isEmpty() ? 0 : Integer.parseInt(numberStr);
+                JSONObject obj = new JSONObject(response);
+                return obj.optInt("count", 0);
             } catch (Exception e) {
                 return 0;
             }
         }
 
-        private static int getVisits(String userId) throws IOException {
+        // Hent totale visits for alle public spil
+        private static int getTotalVisits(String userId) {
+            int totalVisits = 0;
             try {
-                URL url = new URL("https://games.roblox.com/v2/users/" + userId + "/games");
+                String apiUrl = "https://games.roblox.com/v2/users/" + userId + "/games?sortOrder=Asc&limit=100";
+                URL url = new URL(apiUrl);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
                 conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+
                 int status = conn.getResponseCode();
                 if (status != 200) return 0;
 
-                String json = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
+                String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
                 conn.disconnect();
 
-                int totalVisits = 0;
-                String[] parts = json.split("\"visits\":");
-                for (int i = 1; i < parts.length; i++) {
-                    String number = parts[i].split("[,}]")[0];
-                    try { totalVisits += Integer.parseInt(number.trim()); } catch (Exception ignored) {}
+                JSONObject json = new JSONObject(response);
+                JSONArray data = json.getJSONArray("data");
+
+                for (int i = 0; i < data.length(); i++) {
+                    JSONObject game = data.getJSONObject(i);
+                    int visits = game.optInt("placeVisits", 0);
+                    totalVisits += visits;
                 }
-                return totalVisits;
+
             } catch (Exception e) {
-                return 0;
+                e.printStackTrace();
             }
+            return totalVisits;
         }
 
         private static void sendResponse(HttpExchange exchange, int code, String response) throws IOException {
