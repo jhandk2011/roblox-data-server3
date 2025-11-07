@@ -1,203 +1,121 @@
-import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
+// ---------------- Imports & Setup ----------------
+import express from "express";
+import fetch from "node-fetch";
 
-import java.io.OutputStream;
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.util.Scanner;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+const app = express();
+app.use(express.json());
 
-public class Server {
+const PORT = process.env.PORT || 8080;
 
-    // Track visits in memory (for private/unpublished games)
-    private static ConcurrentHashMap<Integer, Integer> visitsMap = new ConcurrentHashMap<>();
+// In-memory map to track visits (like ConcurrentHashMap)
+const visitsMap = new Map();
 
-    public static void main(String[] args) throws IOException {
-        int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
-        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
+// ---------------- POST /visits ----------------
+// Increments a user's visits count in memory
+app.post("/visits", (req, res) => {
+  const { userId } = req.body;
 
-        server.createContext("/user", new UserHandler());
-        server.createContext("/visits", new VisitsHandler());
+  if (!userId || typeof userId !== "number") {
+    return res.status(400).json({ error: "Invalid request (userId missing)" });
+  }
 
-        server.setExecutor(null);
-        server.start();
-        System.out.println("Server started on port " + port);
-    }
+  const count = (visitsMap.get(userId) || 0) + 1;
+  visitsMap.set(userId, count);
 
-    // ---------------- POST /visits to increment a user's visits ----------------
-    static class VisitsHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if (!exchange.getRequestMethod().equalsIgnoreCase("POST")) {
-                sendResponse(exchange, 405, "{\"error\":\"POST only\"}");
-                return;
-            }
+  res.json({ success: true, totalVisits: count });
+});
 
-            Scanner scanner = new Scanner(exchange.getRequestBody()).useDelimiter("\\A");
-            String body = scanner.hasNext() ? scanner.next() : "";
-            scanner.close();
+// ---------------- GET /user/:userId ----------------
+// Returns Roblox user stats (visits, followers, join date)
+app.get("/user/:userId", async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+  if (isNaN(userId)) {
+    return res.status(400).json({ error: "Invalid UserId" });
+  }
 
-            try {
-                // Expecting JSON: {"userId": 12345}
-                Pattern userIdPattern = Pattern.compile("\"userId\"\\s*:\\s*(\\d+)");
-                Matcher matcher = userIdPattern.matcher(body);
-                if (matcher.find()) {
-                    int userId = Integer.parseInt(matcher.group(1));
-                    visitsMap.putIfAbsent(userId, 0);
-                    visitsMap.put(userId, visitsMap.get(userId) + 1);
+  try {
+    const [followers, joinDate, totalVisitsAPI] = await Promise.all([
+      getFollowers(userId),
+      getJoinDate(userId),
+      getTotalVisits(userId),
+    ]);
 
-                    String json = "{ \"success\": true, \"totalVisits\": " + visitsMap.get(userId) + " }";
-                    sendResponse(exchange, 200, json);
-                } else {
-                    sendResponse(exchange, 400, "{\"error\":\"Invalid request\"}");
-                }
-            } catch (Exception e) {
-                sendResponse(exchange, 400, "{\"error\":\"Invalid request\"}");
-            }
-        }
-    }
+    const totalVisits = totalVisitsAPI + (visitsMap.get(userId) || 0);
 
-    // ---------------- GET /user/{userId} ----------------
-    static class UserHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if (!exchange.getRequestMethod().equalsIgnoreCase("GET")) {
-                sendResponse(exchange, 405, "{\"error\":\"GET only\"}");
-                return;
-            }
+    res.json({
+      totalVisits,
+      followers,
+      joinDate,
+    });
+  } catch (err) {
+    console.error("Error fetching data:", err);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
-            String path = exchange.getRequestURI().getPath();
-            String userIdStr = path.replaceFirst("/user/?", "").trim();
+// ---------------- Roblox API Functions ----------------
 
-            if (userIdStr.isEmpty() || !userIdStr.matches("\\d+")) {
-                sendResponse(exchange, 400, "{\"error\":\"Invalid UserId\"}");
-                return;
-            }
+// Get followers count
+async function getFollowers(userId) {
+  try {
+    const resp = await fetch(
+      `https://friends.roproxy.com/v1/users/${userId}/followers/count`,
+      { headers: { "User-Agent": "Mozilla/5.0" } }
+    );
 
-            int userId = Integer.parseInt(userIdStr);
-
-            // Calculate totalVisits: API + internal map
-            int totalVisits = getTotalVisits(userId) + visitsMap.getOrDefault(userId, 0);
-            int followers = getFollowers(userId);
-            String joinDate = getJoinDate(userId);
-
-            // Build JSON response
-            String json = "{"
-                    + "\"totalVisits\":" + totalVisits + ","
-                    + "\"followers\":" + followers + ","
-                    + "\"joinDate\":\"" + joinDate + "\""
-                    + "}";
-
-            sendResponse(exchange, 200, json);
-        }
-    }
-
-    // ---------------- Roblox API calls ----------------
-    private static int getFollowers(int userId) {
-        try {
-            URL url = new URL("https://friends.roblox.com/v1/users/" + userId + "/followers/count");
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-
-            if (conn.getResponseCode() != 200) {
-                conn.disconnect();
-                return 0;
-            }
-
-            Scanner scanner = new Scanner(conn.getInputStream()).useDelimiter("\\A");
-            String response = scanner.hasNext() ? scanner.next() : "";
-            scanner.close();
-            conn.disconnect();
-
-            Pattern p = Pattern.compile("\"count\"\\s*:\\s*(\\d+)");
-            Matcher m = p.matcher(response);
-            if (m.find()) return Integer.parseInt(m.group(1));
-
-        } catch (Exception ignored) {}
-        return 0;
-    }
-
-    private static String getJoinDate(int userId) {
-        try {
-            URL url = new URL("https://users.roblox.com/v1/users/" + userId);
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-
-            if (conn.getResponseCode() != 200) {
-                conn.disconnect();
-                return "Unknown";
-            }
-
-            Scanner scanner = new Scanner(conn.getInputStream()).useDelimiter("\\A");
-            String response = scanner.hasNext() ? scanner.next() : "";
-            scanner.close();
-            conn.disconnect();
-
-            Pattern p = Pattern.compile("\"created\"\\s*:\\s*\"([^\"]+)\"");
-            Matcher m = p.matcher(response);
-            if (m.find()) return m.group(1).trim();
-
-        } catch (Exception ignored) {}
-        return "Unknown";
-    }
-
-    private static int getTotalVisits(int userId) {
-        int totalVisits = 0;
-        try {
-            String baseUrl = "https://games.roblox.com/v2/users/" + userId + "/games?sortOrder=Asc&limit=100";
-            String nextUrl = baseUrl;
-
-            Pattern visitsPattern = Pattern.compile("\"placeVisits\"\\s*:\\s*(\\d+)");
-            Pattern cursorPattern = Pattern.compile("\"nextPageCursor\"\\s*:\\s*\"([^\"]+)\"");
-
-            while (nextUrl != null) {
-                URL url = new URL(nextUrl);
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("GET");
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-
-                if (conn.getResponseCode() != 200) {
-                    conn.disconnect();
-                    break;
-                }
-
-                Scanner scanner = new Scanner(conn.getInputStream()).useDelimiter("\\A");
-                String response = scanner.hasNext() ? scanner.next() : "";
-                scanner.close();
-                conn.disconnect();
-
-                Matcher vm = visitsPattern.matcher(response);
-                while (vm.find()) {
-                    try { totalVisits += Integer.parseInt(vm.group(1)); }
-                    catch (NumberFormatException ignored) {}
-                }
-
-                Matcher cm = cursorPattern.matcher(response);
-                if (cm.find()) {
-                    String cursor = cm.group(1);
-                    nextUrl = (cursor != null && !cursor.isEmpty()) ? baseUrl + "&cursor=" + URLEncoder.encode(cursor, "UTF-8") : null;
-                } else {
-                    nextUrl = null;
-                }
-            }
-
-        } catch (Exception ignored) {}
-        return totalVisits;
-    }
-
-    private static void sendResponse(HttpExchange exchange, int code, String response) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(code, response.getBytes().length);
-        try (OutputStream os = exchange.getResponseBody()) {
-            os.write(response.getBytes());
-        }
-    }
+    if (!resp.ok) return 0;
+    const data = await resp.json();
+    return data.count || 0;
+  } catch {
+    return 0;
+  }
 }
+
+// Get user join date
+async function getJoinDate(userId) {
+  try {
+    const resp = await fetch(`https://users.roproxy.com/v1/users/${userId}`, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+
+    if (!resp.ok) return "Unknown";
+    const data = await resp.json();
+    return data.created || "Unknown";
+  } catch {
+    return "Unknown";
+  }
+}
+
+// Get total visits (with pagination)
+async function getTotalVisits(userId) {
+  let total = 0;
+  let cursor = null;
+  const baseUrl = `https://games.roproxy.com/v2/users/${userId}/games?sortOrder=Asc&limit=100`;
+
+  try {
+    do {
+      const url = cursor ? `${baseUrl}&cursor=${encodeURIComponent(cursor)}` : baseUrl;
+      const resp = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+      if (!resp.ok) break;
+
+      const data = await resp.json();
+      if (data.data && Array.isArray(data.data)) {
+        for (const game of data.data) {
+          total += game.placeVisits || 0;
+        }
+      }
+
+      cursor = data.nextPageCursor || null;
+      if (cursor) await new Promise((r) => setTimeout(r, 200)); // avoid rate limits
+    } while (cursor);
+  } catch (err) {
+    console.error("Error in getTotalVisits:", err);
+  }
+
+  return total;
+}
+
+// ---------------- Start Server ----------------
+app.listen(PORT, () => {
+  console.log(`✅ Server started on port ${PORT}`);
+});
