@@ -1,13 +1,13 @@
-# Brug et officielt Java image
+﻿# Brug et officielt Java-image
 FROM openjdk:17-alpine
 
 # Opret en mappe i containeren
 WORKDIR /app
 
-# Kopier alle filer fra din computer til containeren
+# Kopier alle filer fra dit repository til containeren
 COPY . .
 
-# Byg Java serveren
+# Byg Java-serveren
 RUN javac Server.java
 
 # Start serveren
