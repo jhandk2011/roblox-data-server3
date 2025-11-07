@@ -9,8 +9,6 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Scanner;
 
-import org.json.JSONObject;
-
 public class Server {
 
     public static void main(String[] args) throws IOException {
@@ -46,12 +44,14 @@ public class Server {
             int followers = getFollowers(userId);
             String joinDate = getJoinDate(userId);
 
-            JSONObject response = new JSONObject();
-            response.put("totalVisits", totalVisits);
-            response.put("followers", followers);
-            response.put("joinDate", joinDate);
+            // Build JSON manually
+            String json = "{"
+                    + "\"totalVisits\":" + totalVisits + ","
+                    + "\"followers\":" + followers + ","
+                    + "\"joinDate\":\"" + joinDate + "\""
+                    + "}";
 
-            sendResponse(exchange, 200, response.toString());
+            sendResponse(exchange, 200, json);
         }
     }
 
