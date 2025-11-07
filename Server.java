@@ -7,7 +7,10 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.util.Scanner;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class Server {
 
@@ -62,19 +65,24 @@ public class Server {
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            conn.setRequestProperty("Accept", "application/json");
 
-            if (conn.getResponseCode() != 200) return 0;
+            if (conn.getResponseCode() != 200) {
+                conn.disconnect();
+                return 0;
+            }
 
-            String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
+            String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").hasNext() ? new Scanner(conn.getInputStream()).useDelimiter("\\A").next() : "";
             conn.disconnect();
 
-            String search = "\"count\":";
-            int index = response.indexOf(search);
-            if (index == -1) return 0;
-
-            int start = index + search.length();
-            int end = response.indexOf("}", start);
-            return Integer.parseInt(response.substring(start, end).trim());
+            // Robust JSON extraction for "count"
+            Pattern p = Pattern.compile("\"count\"\\s*:\\s*(\\d+)");
+            Matcher m = p.matcher(response);
+            if (m.find()) {
+                return Integer.parseInt(m.group(1));
+            } else {
+                return 0;
+            }
         } catch (Exception e) {
             return 0;
         }
@@ -86,20 +94,24 @@ public class Server {
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            conn.setRequestProperty("Accept", "application/json");
 
-            if (conn.getResponseCode() != 200) return "Unknown";
+            if (conn.getResponseCode() != 200) {
+                conn.disconnect();
+                return "Unknown";
+            }
 
-            String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
+            String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").hasNext() ? new Scanner(conn.getInputStream()).useDelimiter("\\A").next() : "";
             conn.disconnect();
 
-            String search = "\"created\":\"";
-            int index = response.indexOf(search);
-            if (index == -1) return "Unknown";
-
-            int start = index + search.length();
-            int end = response.indexOf("\"", start);
-            if (end == -1) end = response.length();
-            return response.substring(start, end).trim();
+            // Use regex to extract the created date value precisely
+            Pattern p = Pattern.compile("\"created\"\\s*:\\s*\"([^\"]+)\"");
+            Matcher m = p.matcher(response);
+            if (m.find()) {
+                return m.group(1).trim();
+            } else {
+                return "Unknown";
+            }
 
         } catch (Exception e) {
             return "Unknown";
@@ -109,33 +121,51 @@ public class Server {
     private static int getTotalVisits(int userId) {
         int totalVisits = 0;
         try {
-            String apiUrl = "https://games.roblox.com/v2/users/" + userId + "/games?sortOrder=Asc&limit=100";
-            URL url = new URL(apiUrl);
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            String baseUrl = "https://games.roblox.com/v2/users/" + userId + "/games?sortOrder=Asc&limit=100";
+            String nextUrl = baseUrl;
+            Pattern visitsPattern = Pattern.compile("\"(?:placeVisits|visits)\"\\s*:\\s*(\\d+)");
+            Pattern cursorPattern = Pattern.compile("\"nextPageCursor\"\\s*:\\s*\"([^\"]+)\"");
+            while (nextUrl != null) {
+                URL url = new URL(nextUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                conn.setRequestProperty("Accept", "application/json");
 
-            if (conn.getResponseCode() != 200) return 0;
+                if (conn.getResponseCode() != 200) {
+                    conn.disconnect();
+                    break;
+                }
 
-            String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
-            conn.disconnect();
+                String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").hasNext() ? new Scanner(conn.getInputStream()).useDelimiter("\\A").next() : "";
+                conn.disconnect();
 
-            String search = "\"placeVisits\":";
-            int index = 0;
-            while ((index = response.indexOf(search, index)) != -1) {
-                int start = index + search.length();
-                int end = response.indexOf(",", start);
-                if (end == -1) end = response.indexOf("}", start);
-                if (end == -1) break;
-                String numberStr = response.substring(start, end).trim();
-                try {
-                    totalVisits += Integer.parseInt(numberStr);
-                } catch (Exception ignored) {}
-                index = end;
+                // Sum up all occurrences of placeVisits or visits
+                Matcher vm = visitsPattern.matcher(response);
+                while (vm.find()) {
+                    try {
+                        totalVisits += Integer.parseInt(vm.group(1));
+                    } catch (NumberFormatException ignored) {}
+                }
+
+                // Find nextPageCursor to continue pagination (if present)
+                Matcher cm = cursorPattern.matcher(response);
+                if (cm.find()) {
+                    String cursor = cm.group(1);
+                    if (cursor == null || cursor.isEmpty()) {
+                        nextUrl = null;
+                    } else {
+                        // Append cursor param properly (URL-encode it)
+                        String encoded = URLEncoder.encode(cursor, "UTF-8");
+                        nextUrl = baseUrl + "&cursor=" + encoded;
+                    }
+                } else {
+                    nextUrl = null;
+                }
             }
 
         } catch (Exception e) {
-            e.printStackTrace();
+            // If something fails, return what we've accumulated so far (could be 0)
         }
         return totalVisits;
     }
