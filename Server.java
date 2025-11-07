@@ -7,8 +7,6 @@ import java.net.InetSocketAddress;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Scanner;
-import org.json.JSONArray;
-import org.json.JSONObject;
 
 public class Server {
 
@@ -44,7 +42,6 @@ public class Server {
             }
         }
 
-        // Hent antal followers
         private static int getFollowers(String userId) {
             try {
                 URL url = new URL("https://friends.roblox.com/v1/users/" + userId + "/followers/count");
@@ -58,14 +55,20 @@ public class Server {
                 String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
                 conn.disconnect();
 
-                JSONObject obj = new JSONObject(response);
-                return obj.optInt("count", 0);
+                // Parse count manuelt
+                String search = "\"count\":";
+                int index = response.indexOf(search);
+                if (index == -1) return 0;
+                int start = index + search.length();
+                int end = response.indexOf("}", start);
+                String numberStr = response.substring(start, end).trim();
+                return Integer.parseInt(numberStr);
+
             } catch (Exception e) {
                 return 0;
             }
         }
 
-        // Hent totale visits for alle public spil
         private static int getTotalVisits(String userId) {
             int totalVisits = 0;
             try {
@@ -81,13 +84,18 @@ public class Server {
                 String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
                 conn.disconnect();
 
-                JSONObject json = new JSONObject(response);
-                JSONArray data = json.getJSONArray("data");
-
-                for (int i = 0; i < data.length(); i++) {
-                    JSONObject game = data.getJSONObject(i);
-                    int visits = game.optInt("placeVisits", 0);
-                    totalVisits += visits;
+                // Parse placeVisits manuelt
+                String search = "\"placeVisits\":";
+                int index = 0;
+                while ((index = response.indexOf(search, index)) != -1) {
+                    int start = index + search.length();
+                    int end = response.indexOf(",", start);
+                    if (end == -1) break;
+                    String numberStr = response.substring(start, end).trim();
+                    try {
+                        totalVisits += Integer.parseInt(numberStr);
+                    } catch (Exception ignored) {}
+                    index = end;
                 }
 
             } catch (Exception e) {
