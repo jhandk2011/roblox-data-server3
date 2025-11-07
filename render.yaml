@@ -4,8 +4,6 @@ services:
     env: docker
     plan: free
     branch: main
-    buildCommand: javac Server.java
-    startCommand: java Server
     envVars:
       - key: PORT
         value: 8080
