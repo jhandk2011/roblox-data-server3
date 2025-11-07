@@ -42,6 +42,7 @@ public class Server {
             }
         }
 
+        // Hent followers fra Roblox API
         private static int getFollowers(String userId) {
             try {
                 URL url = new URL("https://friends.roblox.com/v1/users/" + userId + "/followers/count");
@@ -55,7 +56,6 @@ public class Server {
                 String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
                 conn.disconnect();
 
-                // Parse count manuelt
                 String search = "\"count\":";
                 int index = response.indexOf(search);
                 if (index == -1) return 0;
@@ -69,6 +69,7 @@ public class Server {
             }
         }
 
+        // Hent totalVisits fra alle public spil
         private static int getTotalVisits(String userId) {
             int totalVisits = 0;
             try {
@@ -84,12 +85,13 @@ public class Server {
                 String response = new Scanner(conn.getInputStream()).useDelimiter("\\A").next();
                 conn.disconnect();
 
-                // Parse placeVisits manuelt
+                // Robust parsing: find all "placeVisits": numbers
                 String search = "\"placeVisits\":";
                 int index = 0;
                 while ((index = response.indexOf(search, index)) != -1) {
                     int start = index + search.length();
                     int end = response.indexOf(",", start);
+                    if (end == -1) end = response.indexOf("}", start); // sidste element
                     if (end == -1) break;
                     String numberStr = response.substring(start, end).trim();
                     try {
